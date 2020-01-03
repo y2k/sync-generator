@@ -1,5 +1,29 @@
 ﻿open System
 
+module Foo =
+    type Diff = Change of byte [] * Guid | DiffAdd of byte [] | DiffRemove of byte []
+
+    type 'a B = { diff : 'a -> 'a -> Diff ; id : Guid }
+
+    type 'a C = { ser : 'a -> byte [] ; id : Guid }
+
+    type KeyValue =
+        | OfBase of byte [] * parserId : Guid
+        | OfInt of key : int * value : KeyValue * parserId : Guid
+        | OfString of key : string * value : KeyValue * parserId : Guid
+        | OfCollection of value : KeyValue []
+        | OfMap of value : Map<string, KeyValue>
+
+    let serializeDiff (a : KeyValue) (b : KeyValue) : byte [] =
+        match (a, b) with
+        | OfBase (a, id), OfBase (b, _) ->
+            failwith "???"
+        | OfCollection xa, OfCollection xb ->
+            failwith "???"
+        | OfMap ma, OfMap mb ->
+            failwith "???"
+        | _ -> failwith "???"
+
 type A = 
     { name: string
       type_: string
@@ -7,7 +31,6 @@ type A =
 type Records = A list
 
 module Generator =
-
     let prefix = "(* GENERATED *)\n\nnamespace Generated.Generated\n\ntype LocalDb =\n"
 
     let mkType records =
@@ -30,8 +53,8 @@ module Parser =
       IO.File.ReadAllText file
       |> Deserialize<Records>
       |> function
-        | [ Success { Data = x } ] -> x
-        | _ -> failwith "???"
+         | [ Success { Data = x } ] -> x
+         | _ -> failwith "???"
 
 [<EntryPoint>]
 let main _ =

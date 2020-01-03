@@ -3,3 +3,4 @@ obj/
 .vscode/
 *.gen.*
 *.yaml
+.ionide/
