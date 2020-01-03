@@ -4,8 +4,7 @@
 let TODO() = failwith "not implemented"
 
 module Diff =
-
-    let mapDiff (ma : Map<'k, 'v>) (mb : Map<'k, 'v>) : Map<'k, 'v> * Set<'k> =
+    let diffMaps (ma : Map<'k, 'v>) (mb : Map<'k, 'v>) : Map<'k, 'v> * Set<'k> =
         let added = Map.filter (fun k _ -> Map.containsKey k ma |> not) mb
         let removed = Map.toSeq ma |> Seq.choose (fun (k, _) -> if Map.containsKey k mb then None else Some k) |> Set.ofSeq
         let changed =
@@ -32,14 +31,32 @@ module Diff =
               topTags_changed : Map<string, Tag>
               topTags_deleted : Set<string> }
         let diff a b =
-            let (pc, pd) = mapDiff a.posts b.posts
-            let (uc, ud) = mapDiff a.userTags b.userTags
-            let (tc, td) = mapDiff a.topTags b.topTags
+            let (pc, pd) = diffMaps a.posts b.posts
+            let (uc, ud) = diffMaps a.userTags b.userTags
+            let (tc, td) = diffMaps a.topTags b.topTags
             { posts_changed = pc; posts_deleted = pd; 
               userTags_changed = uc; userTags_deleted = ud; 
               topTags_changed = tc; topTags_deleted = td }
+        let apply a diff =
+            { posts = applyDiff a.posts diff.posts_changed diff.posts_deleted
+              userTags = applyDiff a.userTags diff.userTags_changed diff.userTags_deleted
+              topTags = applyDiff a.topTags diff.topTags_changed diff.topTags_deleted }
         let main _ =
-            TODO()
+            let origin =
+                { posts = [ 999, Post; 42, Post ] |> Map.ofList
+                  userTags = [ "comix", Tag ] |> Map.ofList
+                  topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
+            let changed =
+                { posts = [ 999, Post ] |> Map.ofList
+                  userTags = [ "anime", Tag; "comix", Tag ] |> Map.ofList
+                  topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
+            let diff = diff origin changed
+            printfn "Diff = %O" diff
+
+            let actual = apply origin diff
+            if actual = changed 
+                then printfn "Update success"
+                else failwithf "Assert failed\nExpected = %O\nActual = %O" origin changed
 
 module Serializer =
     type C<'a, 'k> = 
@@ -52,6 +69,9 @@ module Serializer =
         | OfString of key : string * value : KeyValue * parserId : Guid
         | OfCollection of value : KeyValue []
         | OfMap of value : Map<string, KeyValue>
+    let UnitC : C<unit, _> =
+        { ser = fun _ -> [||]
+          deser = fun _ o _ -> (), 0 }
     let IntC : C<int, _> =
         { ser = fun x -> BitConverter.GetBytes(x)
           deser = fun x o _ -> BitConverter.ToInt32(x, o), 4 }
@@ -87,79 +107,89 @@ module Serializer =
               add = fun k v m -> Map.add k v m
               empty = Map.empty }
         commonC keyC vc objModule
+    let SetC (keyC : C<'k, _>) : C<Set<'k>, _> =
+        let objModule : ObjModule<Set<'k>, unit, 'k> = 
+            { toList = fun m -> Set.toList m |> List.map (fun x -> x, ())
+              add = fun k _ m -> Set.add k m
+              empty = Set.empty }
+        commonC keyC UnitC objModule
+    let OptionC (valueC : C<'v, _>) : C<Option<'v>, _> =
+        let objModule : ObjModule<Option<'v>, _, _> = 
+            { toList = fun m -> m |> Option.map (fun x -> [(), x]) |> Option.defaultValue []
+              add = fun _ x _ -> Some x
+              empty = None }
+        commonC UnitC valueC objModule
 
-module Example =
-    open Serializer
+    module Example =
+        type Post = { id : int; title: string; comments: int }
+        type Tag = Tag
+        type LocalDb =
+            { posts : Map<int, Post>
+              userTags : Map<string, Tag>
+              topTags : Map<string, Tag> }
+        let TagC : C<Tag, _> = { ser = (fun _ -> [||]); deser = (fun _ _ _ -> Tag, 0) }
 
-    type Post = { id : int; title: string; comments: int }
-    type Tag = Tag
-    type LocalDb =
-        { posts : Map<int, Post>
-          userTags : Map<string, Tag>
-          topTags : Map<string, Tag> }
-    let TagC : C<Tag, _> = { ser = (fun _ -> [||]); deser = (fun _ _ _ -> Tag, 0) }
+        type SimpleTypes = IntType of int | StringType of string
 
-    type SimpleTypes = IntType of int | StringType of string
+        let PostC : C<Post, _> =
+            let a : C<SimpleTypes, _> = 
+                { ser = function
+                        | IntType x -> IntC.ser x
+                        | StringType x -> StringC.ser x
+                  deser = fun bs o k -> 
+                      match k with
+                      | 1 -> IntC.deser bs o () |> fun (x, l) -> IntType x, l
+                      | 2 -> StringC.deser bs o () |> fun (x, l) -> StringType x, l
+                      | 3 -> IntC.deser bs o () |> fun (x, l) -> IntType x, l
+                      | x -> failwithf "illegal tag (%i)" x }
+            let b : ObjModule<Post, SimpleTypes, int> = 
+                { toList = fun x -> [ 1, IntType x.id; 2, StringType x.title; 3, IntType x.comments ]
+                  add = fun k f x -> 
+                    match k, f with
+                    | 1, IntType id -> { x with id = id }
+                    | 2, StringType title -> { x with title = title }
+                    | 3, IntType comments -> { x with comments = comments }
+                    | x -> failwithf "illegal tag (%O)" x
+                  empty = { id = 0; title = ""; comments = 0 } }
+            commonC IntC a b
 
-    let PostC : C<Post, _> =
-        let a : C<SimpleTypes, _> = 
-            { ser = function
-                    | IntType x -> IntC.ser x
-                    | StringType x -> StringC.ser x
-              deser = fun bs o k -> 
-                  match k with
-                  | 1 -> IntC.deser bs o () |> fun (x, l) -> IntType x, l
-                  | 2 -> StringC.deser bs o () |> fun (x, l) -> StringType x, l
-                  | 3 -> IntC.deser bs o () |> fun (x, l) -> IntType x, l
-                  | x -> failwithf "illegal tag (%i)" x }
-        let b : ObjModule<Post, SimpleTypes, int> = 
-            { toList = fun x -> [ 1, IntType x.id; 2, StringType x.title; 3, IntType x.comments ]
-              add = fun k f x -> 
-                match k, f with
-                | 1, IntType id -> { x with id = id }
-                | 2, StringType title -> { x with title = title }
-                | 3, IntType comments -> { x with comments = comments }
-                | x -> failwithf "illegal tag (%O)" x
-              empty = { id = 0; title = ""; comments = 0 } }
-        commonC IntC a b
+        type LocalDbFields = PostsField of Map<int, Post> | UserTagsField of Map<string, Tag> | TopTagsField of Map<string, Tag>
+        let LocalDbC : C<LocalDb, unit> = 
+            let a : C<LocalDbFields, _> =
+                { ser = 
+                    function
+                    | PostsField x -> (MapC IntC PostC).ser x
+                    | UserTagsField x -> (MapC StringC TagC).ser x
+                    | TopTagsField x -> (MapC StringC TagC).ser x
+                  deser = fun bs o key ->
+                    match key with
+                    | 1 -> (MapC IntC PostC).deser bs o () |> fun (x, o) -> PostsField x, o
+                    | 2 -> (MapC StringC TagC).deser bs o () |> fun (x, o) -> UserTagsField x, o
+                    | 3 -> (MapC StringC TagC).deser bs o () |> fun (x, o) -> TopTagsField x, o
+                    | x -> failwithf "illegal tag (%i)" x }
+            let b : ObjModule<LocalDb, LocalDbFields, int> = 
+                { toList = fun x -> 
+                    [ 1, PostsField x.posts
+                      2, UserTagsField x.userTags
+                      3, TopTagsField x.topTags ]
+                  add = fun _ x db -> 
+                    match x with
+                    | PostsField x -> { db with posts = x }
+                    | UserTagsField x -> { db with userTags = x }
+                    | TopTagsField x -> { db with topTags = x }
+                  empty = { posts = Map.empty ; userTags = Map.empty; topTags = Map.empty } }
+            commonC IntC a b
 
-    type LocalDbFields = PostsField of Map<int, Post> | UserTagsField of Map<string, Tag> | TopTagsField of Map<string, Tag>
-    let LocalDbC : C<LocalDb, unit> = 
-        let a : C<LocalDbFields, _> =
-            { ser = 
-                function
-                | PostsField x -> (MapC IntC PostC).ser x
-                | UserTagsField x -> (MapC StringC TagC).ser x
-                | TopTagsField x -> (MapC StringC TagC).ser x
-              deser = fun bs o key ->
-                match key with
-                | 1 -> (MapC IntC PostC).deser bs o () |> fun (x, o) -> PostsField x, o
-                | 2 -> (MapC StringC TagC).deser bs o () |> fun (x, o) -> UserTagsField x, o
-                | 3 -> (MapC StringC TagC).deser bs o () |> fun (x, o) -> TopTagsField x, o
-                | x -> failwithf "illegal tag (%i)" x }
-        let b : ObjModule<LocalDb, LocalDbFields, int> = 
-            { toList = fun x -> 
-                [ 1, PostsField x.posts
-                  2, UserTagsField x.userTags
-                  3, TopTagsField x.topTags ]
-              add = fun _ x db -> 
-                match x with
-                | PostsField x -> { db with posts = x }
-                | UserTagsField x -> { db with userTags = x }
-                | TopTagsField x -> { db with topTags = x }
-              empty = { posts = Map.empty ; userTags = Map.empty; topTags = Map.empty } }
-        commonC IntC a b
-
-    let main () =
-        let db = 
-          { posts = [ 999, { id = 999; title = "hello"; comments = 13 }; 42, { id = 42; title = "world"; comments = -100 } ] |> Map.ofList
-            userTags = [ "anime", Tag; "comix", Tag ] |> Map.ofList
-            topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
-        let a = LocalDbC.ser db
-        printfn "%A" a
-        let (b, len) = LocalDbC.deser a 0 ()
-        printfn "%O (%i)" b len
-        if db <> b then failwith "Deserialized result not equals to origin"
+        let main () =
+            let db = 
+              { posts = [ 999, { id = 999; title = "hello"; comments = 13 }; 42, { id = 42; title = "world"; comments = -100 } ] |> Map.ofList
+                userTags = [ "anime", Tag; "comix", Tag ] |> Map.ofList
+                topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
+            let a = LocalDbC.ser db
+            printfn "%A" a
+            let (b, len) = LocalDbC.deser a 0 ()
+            printfn "%O (%i)" b len
+            if db <> b then failwith "Deserialized result not equals to origin"
 
 type A = 
     { name: string
@@ -198,5 +228,6 @@ let main _ =
     // Parser.parse "example.yaml"
     // |> Generator.generate
     // |> fun x -> IO.File.WriteAllText("result.gen.fsx", x)
-    Example.main()
+    // Example.main()
+    Diff.Example.main()
     0
