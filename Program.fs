@@ -144,39 +144,24 @@ module Serializer =
         commonC UnitC valueC objModule
 
     type Field'<'field, 'instance> = 
-        { ser : 'field -> byte [] option
-          deser : Buffer -> 'field * int
-          set : 'instance -> 'field -> 'instance
-          get : 'instance -> 'field }
-    let recordC fields empty : C<_> =
-        commonC
-            IntC 
-            { ser = fun x -> fields |> List.pick (fun f -> f.ser x)
-              deser = fun b i -> (fields.[i - 1]).deser b }
-            { toList = fun p -> fields |> List.mapi (fun i x -> i + 1, x.get p)
-              add = fun i f x -> (fields.[i - 1]).set x f
-              empty = empty }
-    let recordC' fields empty : C<_> =
+        { deserSet : 'instance -> Buffer -> 'instance * int
+          getSer : 'instance -> byte [] }
+    let recordC (fields : Field'<_, _> list) empty : C<_> =
         { ser = fun m ->
-            let ser x = List.pick (fun f -> f.ser x) fields
-            fields 
-            |> List.mapi (fun i x -> i + 1, x.get m)
-            |> List.collect (fun (i, x) -> [ IntC.ser i; ser x ])
+            fields
+            |> List.map ^ fun f -> f.getSer m
             |> Array.concat
             |> fun xs -> Array.concat [ BitConverter.GetBytes(fields.Length) ; xs ]
           deser = fun b _ ->
-            let set i f x = (fields.[i - 1]).set x f
-            let deser b i = (fields.[i - 1]).deser b
             let count = BitConverter.ToInt32(b.bytes, b.offset)
             List.init count ignore
             |> List.fold 
                 (fun (m, l, i) _ ->
-                    let (k, l1) = IntC.deser { b with offset = b.offset + l } 0
-                    let (v, l2) = deser { b with offset = b.offset + l + l1 } i
-                    set k v m, l + l1 + l2, i + 1)
+                    let deserSet = (fields.[i - 1]).deserSet
+                    let (v, l2) = deserSet m { b with offset = b.offset + l }
+                    v, l + l2, i + 1)
                 (empty, 4, 1) 
             |> fun (a, b, _) -> a, b }
-    type SimpleTypeField = IntField of int | StringField of string
 
     module Example =
         type Post = { id : int; title: string; comments: int }
@@ -190,47 +175,27 @@ module Serializer =
         let TagC : C<Tag> = { ser = (fun _ -> [||]); deser = (fun _ _ -> Tag, 0) }
 
         let PostC : C<Post> =
-            recordC 
-                [ { ser = function IntField x -> Some <| IntC.ser x | _ -> None
-                    deser = fun bs -> IntC.deser bs 0 ||> fun a l -> IntField a, l
-                    set = fun x -> function IntField f -> { x with id = f } | e -> failwithf "%O" e
-                    get = fun x -> IntField x.id }
-                  { ser = function StringField x -> Some <| StringC.ser x | _ -> None
-                    deser = fun b -> StringC.deser b 0 ||> fun a l -> StringField a, l
-                    set = fun x -> function StringField f -> { x with title = f } | e -> failwithf "%O" e
-                    get = fun x -> StringField x.title }
-                  { ser = function IntField x -> Some <| IntC.ser x | _ -> None
-                    deser = fun b -> IntC.deser b 0 ||> fun a l -> IntField a, l
-                    set = fun x -> function IntField f -> { x with comments = f } | e -> failwithf "%O" e
-                    get = fun x -> IntField x.comments } ] 
+            recordC
+                [ { getSer = fun x -> IntC.ser x.id
+                    deserSet = fun x bs -> IntC.deser bs 0 |> fun (f, l) -> { x with id = f }, l }
+                  { getSer = fun x -> StringC.ser x.title
+                    deserSet = fun x bs -> StringC.deser bs 0 |> fun (f, l) -> { x with title = f }, l }
+                  { getSer = fun x -> IntC.ser x.comments
+                    deserSet = fun x bs -> IntC.deser bs 0 |> fun (f, l) -> { x with comments = f }, l } ] 
                 { id = 0; title = ""; comments = 0 }
 
-        type LocalDbFields = 
-            | PostsField of Map<int, Post> 
-            | MapStringTagField of Map<string, Tag>
-            | SimpleField of SimpleTypeField
         let LocalDbC : C<LocalDb> =
             recordC
-                [ { ser = function PostsField x -> (MapC IntC PostC).ser x |> Some | _ -> None
-                    deser = fun b -> (MapC IntC PostC).deser b 0 ||> fun a l -> PostsField a, l
-                    set = fun x -> function PostsField f -> { x with posts = f } | _ -> failwith "???" 
-                    get = fun x -> PostsField x.posts }
-                  { ser = function MapStringTagField x -> (MapC StringC TagC).ser x |> Some | _ -> None
-                    deser = fun b -> (MapC StringC TagC).deser b 0 ||> fun a l -> MapStringTagField a, l
-                    set = fun x -> function MapStringTagField f -> { x with userTags = f } | _ -> failwith "???"
-                    get = fun x -> MapStringTagField x.userTags }
-                  { ser = function MapStringTagField x -> (MapC StringC TagC).ser x |> Some | _ -> None
-                    deser = fun b -> (MapC StringC TagC).deser b 0 ||> fun a l -> MapStringTagField a, l
-                    set = fun x -> function MapStringTagField f -> { x with topTags = f } | _ -> failwith "???"
-                    get = fun x -> MapStringTagField x.topTags }
-                  { ser = function SimpleField (IntField x) -> IntC.ser x |> Some | _ -> None
-                    deser = fun b -> IntC.deser b 0 ||> fun a l -> SimpleField (IntField a), l
-                    set = fun x -> function SimpleField (IntField f) -> { x with number1 = f } | _ -> failwith "???"
-                    get = fun x -> SimpleField (IntField x.number1) }
-                  { ser = function SimpleField (StringField x) -> StringC.ser x |> Some | _ -> None
-                    deser = fun b -> StringC.deser b 0 ||> fun a l -> SimpleField (StringField a), l
-                    set = fun x -> function SimpleField (StringField f) -> { x with string1 = f } | _ -> failwith "???"
-                    get = fun x -> SimpleField (StringField x.string1) } ]
+                [ { getSer = fun x -> (MapC IntC PostC).ser x.posts
+                    deserSet = fun x bs -> (MapC IntC PostC).deser bs 0 |> fun (f, l) -> { x with posts = f }, l }
+                  { getSer = fun x -> (MapC StringC TagC).ser x.userTags
+                    deserSet = fun x bs -> (MapC StringC TagC).deser bs 0 |> fun (f, l) -> { x with userTags = f }, l }
+                  { getSer = fun x -> (MapC StringC TagC).ser x.topTags
+                    deserSet = fun x bs -> (MapC StringC TagC).deser bs 0 |> fun (f, l) -> { x with topTags = f }, l }
+                  { getSer = fun x -> IntC.ser x.number1
+                    deserSet = fun x bs -> IntC.deser bs 0 |> fun (f, l) -> { x with number1 = f }, l }
+                  { getSer = fun x -> StringC.ser x.string1
+                    deserSet = fun x bs -> StringC.deser bs 0 |> fun (f, l) -> { x with string1 = f }, l } ]
                 { posts = Map.empty ; userTags = Map.empty; topTags = Map.empty; number1 = 0; string1 = "" }
 
         let main () =
@@ -280,21 +245,10 @@ module Generator =
         |> List.fold (+) "type LocalDbDiff =\n"
         |> flip (+) "\n"
 
-    let mkFieldType (records : Records) =
-        let getMapKeyType = function Match "Map<(.+?), .+?>" [x] -> x | e -> failwithf "%O" e
-        records
-        |> List.indexed
-        |> List.collect ^ fun (i, r) -> 
-            [ sprintf "    | Field_%s_changed of %s\n" r.name r.type_
-              sprintf "    | Field_%s_removed of Set<%s>\n" r.name (getMapKeyType r.type_) ]
-        |> List.fold (+) "type LocalDbDiffField =\n"
-        |> flip (+) "\n"
-
     let generate (records : Records) = 
         [ prefix
           mkType records
-          mkDiffType records
-          mkFieldType records ]
+          mkDiffType records ]
         |> List.fold (+) ""
 
     module GneratedExample =
@@ -314,28 +268,16 @@ module Generator =
               topTags_changed : Map<string, Tag>
               topTags_removed : Set<string> }
 
-        type LocalDbDiffField =
-            | Field_posts_changed of Map<int, Post>
-            | Field_posts_removed of Set<int>
-            | Field_userTags_changed of Map<string, Tag>
-            | Field_userTags_removed of Set<string>
-            | Field_topTags_changed of Map<string, Tag>
-            | Field_topTags_removed of Set<string>
-
         let main _ =
             let PostC : Post Serializer.C = never()
             let TagC : Tag Serializer.C = never()
 
             let LocalDbC : LocalDbDiff Serializer.C =
                 Serializer.recordC
-                    [ { ser = function Field_posts_changed x -> (Serializer.MapC Serializer.IntC PostC).ser x |> Some | _ -> None
-                        deser = fun b -> (Serializer.MapC Serializer.IntC PostC).deser b 0 ||> fun a l -> Field_posts_changed a, l
-                        set = fun x -> function Field_posts_changed f -> { x with posts_changed = f } | e -> failwithf "%O" e
-                        get = fun x -> Field_posts_changed x.posts_changed }
-                      { ser = function Field_posts_removed x -> (Serializer.SetC Serializer.IntC).ser x |> Some | _ -> None
-                        deser = fun b -> (Serializer.SetC Serializer.IntC).deser b 0 ||> fun a l -> Field_posts_removed a, l
-                        set = fun x -> function Field_posts_removed f -> { x with posts_removed = f } | e -> failwithf "%O" e
-                        get = fun x -> Field_posts_removed x.posts_removed } ]
+                    [ { getSer = fun x -> (Serializer.MapC Serializer.IntC PostC).ser x.posts_changed
+                        deserSet = fun x bs -> (Serializer.MapC Serializer.IntC PostC).deser bs 0 |> fun (f, l) -> { x with posts_changed = f }, l }
+                      { getSer = fun x -> (Serializer.SetC Serializer.IntC).ser x.posts_removed
+                        deserSet = fun x bs -> (Serializer.SetC Serializer.IntC).deser bs 0 |> fun (f, l) -> { x with posts_removed = f }, l } ]
                     { posts_changed = Map.empty
                       posts_removed = Set.empty
                       userTags_changed = Map.empty
