@@ -84,7 +84,7 @@ module Serializer =
     type Buffer = { bytes : byte []; offset : int }
     type C<'a> = 
         { ser : 'a -> byte []
-          deser : Buffer -> int -> 'a * int }
+          deser : Buffer -> 'a * int }
     type KeyValue =
         | OfBase of byte [] * parserId : Guid
         | OfInt of key : int * value : KeyValue * parserId : Guid
@@ -93,15 +93,15 @@ module Serializer =
         | OfMap of value : Map<string, KeyValue>
     let UnitC : C<unit> =
         { ser = fun _ -> [||]
-          deser = fun _ _ -> (), 0 }
+          deser = fun _ -> (), 0 }
     let IntC : C<int> =
         { ser = fun x -> BitConverter.GetBytes(x)
-          deser = fun b _ -> BitConverter.ToInt32(b.bytes, b.offset), 4 }
+          deser = fun b -> BitConverter.ToInt32(b.bytes, b.offset), 4 }
     let StringC : C<string> = 
         { ser = (fun x -> 
             let bs = Text.Encoding.UTF8.GetBytes(x)
             Array.concat [ BitConverter.GetBytes(length bs) ; bs ])
-          deser = fun b _ ->
+          deser = fun b ->
             let len = BitConverter.ToInt32(b.bytes, b.offset)
             Text.Encoding.UTF8.GetString(b.bytes, b.offset + 4, len), len + 4 }
     type ObjModule<'a, 'b, 'k> =
@@ -114,13 +114,13 @@ module Serializer =
             |> List.collect (fun (i, x) -> [ keyC.ser i; valueC.ser x ])
             |> Array.concat
             |> fun xs -> Array.concat [ BitConverter.GetBytes(length <| objModule.toList m) ; xs ]
-          deser = fun b _ ->
+          deser = fun b ->
             let count = BitConverter.ToInt32(b.bytes, b.offset)
             List.init count ignore
             |> List.fold 
                 (fun (m, l, i) _ -> 
-                    let (k, l1) = keyC.deser { b with offset = b.offset + l } 0
-                    let (v, l2) = valueC.deser { b with offset = b.offset + l + l1 } i
+                    let (k, l1) = keyC.deser { b with offset = b.offset + l }
+                    let (v, l2) = valueC.deser { b with offset = b.offset + l + l1 }
                     objModule.add k v m, l + l1 + l2, i + 1)
                 (objModule.empty, 4, 1) 
             |> fun (a, b, _) -> a, b }
@@ -143,25 +143,22 @@ module Serializer =
               empty = None }
         commonC UnitC valueC objModule
 
-    type Field'<'field, 'instance> = 
-        { deserSet : 'instance -> Buffer -> 'instance * int
-          getSer : 'instance -> byte [] }
-    let recordC (fields : Field'<_, _> list) empty : C<_> =
+    type FieldSer<'a> = 
+        { getSer : 'a -> byte [] 
+          deserSet : 'a -> Buffer -> 'a * int }
+    let recordC (fields : FieldSer<_> list) empty : C<_> =
         { ser = fun m ->
             fields
             |> List.map ^ fun f -> f.getSer m
             |> Array.concat
-            |> fun xs -> Array.concat [ BitConverter.GetBytes(fields.Length) ; xs ]
-          deser = fun b _ ->
-            let count = BitConverter.ToInt32(b.bytes, b.offset)
-            List.init count ignore
+          deser = fun b ->
+            fields
             |> List.fold 
-                (fun (m, l, i) _ ->
-                    let deserSet = (fields.[i - 1]).deserSet
+                (fun (m, l) ff -> 
+                    let deserSet = ff.deserSet
                     let (v, l2) = deserSet m { b with offset = b.offset + l }
-                    v, l + l2, i + 1)
-                (empty, 4, 1) 
-            |> fun (a, b, _) -> a, b }
+                    v, l + l2) 
+                (empty, 0) }
 
     module Example =
         type Post = { id : int; title: string; comments: int }
@@ -172,30 +169,30 @@ module Serializer =
               topTags : Map<string, Tag>
               number1 : int
               string1 : string }
-        let TagC : C<Tag> = { ser = (fun _ -> [||]); deser = (fun _ _ -> Tag, 0) }
+        let TagC : C<Tag> = { ser = (fun _ -> [||]); deser = (fun _ -> Tag, 0) }
 
         let PostC : C<Post> =
             recordC
                 [ { getSer = fun x -> IntC.ser x.id
-                    deserSet = fun x bs -> IntC.deser bs 0 |> fun (f, l) -> { x with id = f }, l }
+                    deserSet = fun x bs -> IntC.deser bs |> fun (f, l) -> { x with id = f }, l }
                   { getSer = fun x -> StringC.ser x.title
-                    deserSet = fun x bs -> StringC.deser bs 0 |> fun (f, l) -> { x with title = f }, l }
+                    deserSet = fun x bs -> StringC.deser bs |> fun (f, l) -> { x with title = f }, l }
                   { getSer = fun x -> IntC.ser x.comments
-                    deserSet = fun x bs -> IntC.deser bs 0 |> fun (f, l) -> { x with comments = f }, l } ] 
+                    deserSet = fun x bs -> IntC.deser bs |> fun (f, l) -> { x with comments = f }, l } ] 
                 { id = 0; title = ""; comments = 0 }
 
         let LocalDbC : C<LocalDb> =
             recordC
                 [ { getSer = fun x -> (MapC IntC PostC).ser x.posts
-                    deserSet = fun x bs -> (MapC IntC PostC).deser bs 0 |> fun (f, l) -> { x with posts = f }, l }
+                    deserSet = fun x bs -> (MapC IntC PostC).deser bs |> fun (f, l) -> { x with posts = f }, l }
                   { getSer = fun x -> (MapC StringC TagC).ser x.userTags
-                    deserSet = fun x bs -> (MapC StringC TagC).deser bs 0 |> fun (f, l) -> { x with userTags = f }, l }
+                    deserSet = fun x bs -> (MapC StringC TagC).deser bs |> fun (f, l) -> { x with userTags = f }, l }
                   { getSer = fun x -> (MapC StringC TagC).ser x.topTags
-                    deserSet = fun x bs -> (MapC StringC TagC).deser bs 0 |> fun (f, l) -> { x with topTags = f }, l }
+                    deserSet = fun x bs -> (MapC StringC TagC).deser bs |> fun (f, l) -> { x with topTags = f }, l }
                   { getSer = fun x -> IntC.ser x.number1
-                    deserSet = fun x bs -> IntC.deser bs 0 |> fun (f, l) -> { x with number1 = f }, l }
+                    deserSet = fun x bs -> IntC.deser bs |> fun (f, l) -> { x with number1 = f }, l }
                   { getSer = fun x -> StringC.ser x.string1
-                    deserSet = fun x bs -> StringC.deser bs 0 |> fun (f, l) -> { x with string1 = f }, l } ]
+                    deserSet = fun x bs -> StringC.deser bs |> fun (f, l) -> { x with string1 = f }, l } ]
                 { posts = Map.empty ; userTags = Map.empty; topTags = Map.empty; number1 = 0; string1 = "" }
 
         let main () =
@@ -209,7 +206,7 @@ module Serializer =
                 string1 = "1990" }
             let a = LocalDbC.ser db
             printfn "%A" a
-            let (b, len) = LocalDbC.deser { bytes = a; offset = 0 } 0
+            let (b, len) = LocalDbC.deser { bytes = a; offset = 0 }
             printfn "%O (%i)" b len
             if db <> b then failwith "Deserialized result not equals to origin"
 
@@ -220,7 +217,7 @@ type A =
 type Records = A list
 
 module Generator =
-    let prefix = "(* GENERATED *)\n\nnamespace Generated.Generated\n\ntype Post = Post\ntype Tag = Tag\n\ntype LocalDb =\n"
+    let prefix = "(* GENERATED *)\n\n#load \"Program.fs\"\nopen App\nopen App.Serializer\n\ntype Post = Post\ntype Tag = Tag\n\ntype LocalDb =\n"
 
     let mkType records =
         records
@@ -231,8 +228,15 @@ module Generator =
         |> List.fold (+) ""
         |> flip (+) "\n"
 
+    let getMapKeyType = function Match "Map<(.+?), .+?>" [x] -> x | e -> failwithf "%O" e
+    let getMapValueType = function Match "Map<.+?, (.+?)>" [x] -> x | e -> failwithf "%O" e
+    let typeToCType =
+        function 
+        | "int" -> "IntC"
+        | "string" -> "StringC"
+        | name -> sprintf "%sC" name
+
     let mkDiffType (records : Records) =
-        let getMapKeyType = function Match "Map<(.+?), .+?>" [x] -> x | e -> failwithf "%O" e
         records
         |> List.indexed
         |> List.collect ^ fun (i, r) -> 
@@ -243,15 +247,60 @@ module Generator =
                   then sprintf "      %s_removed : Set<%s> }\n" r.name (getMapKeyType r.type_)
                   else sprintf "      %s_removed : Set<%s>\n" r.name (getMapKeyType r.type_)) ]
         |> List.fold (+) "type LocalDbDiff =\n"
-        |> flip (+) "\n"
+
+    let mkSerializeDiff (records : Records) =
+        records
+        |> List.indexed
+        |> List.collect ^ fun (i, r) -> 
+            [ (if i = 0 
+                  then sprintf "    { %s_changed = Diff.diffMapsAdd a.%s b.%s\n" r.name r.name r.name
+                  else sprintf "      %s_changed = Diff.diffMapsAdd a.%s b.%s\n" r.name r.name r.name)
+              (if i = length records - 1
+                  then sprintf "      %s_removed = Diff.diffMapsRemove a.%s b.%s }\n" r.name r.name r.name
+                  else sprintf "      %s_removed = Diff.diffMapsRemove a.%s b.%s\n" r.name r.name r.name) ]
+        |> List.fold (+) "let serializeDiff (a : LocalDb) (b : LocalDb) : byte [] =\n"
+        |> flip (+) "    |> LocalDbC.ser\n\n"
+
+    let mkApplyDiff records =
+        records
+        |> List.map ^ fun r -> 
+            sprintf "        %s = Diff.applyDiff a.%s df.%s_changed df.%s_removed\n" r.name r.name r.name r.name
+        |> List.fold (+) "let applyDiff (a : LocalDb) (bytes : byte[]) : LocalDb =\n    let (df, _) = LocalDbC.deser { bytes = bytes; offset = 0 }\n    { a with\n"
+        |> flip (+) "    }\n\n"
+
+    let mkLocalDbC records =
+        [ yield "let LocalDbC : LocalDbDiff C ="
+          yield "    recordC"
+          yield "        ["
+          yield! 
+            records
+            |> List.collect ^ fun r ->
+                let kt = getMapKeyType r.type_ |> typeToCType
+                [ sprintf "          { getSer = fun x -> (MapC %s %sC).ser x.%s_changed" kt (getMapValueType r.type_) r.name
+                  sprintf "            deserSet = fun x bs -> (MapC %s %sC).deser bs |> fun (f, l) -> { x with %s_changed = f }, l }" kt (getMapValueType r.type_) r.name
+                  sprintf "          { getSer = fun x -> (SetC %s).ser x.%s_removed" kt r.name
+                  sprintf "            deserSet = fun x bs -> (SetC %s).deser bs |> fun (f, l) -> { x with %s_removed = f }, l }" kt r.name ]
+          yield "        ]"
+          yield "        {"
+          yield! 
+            records
+            |> List.collect ^ fun r ->
+                [ sprintf "          %s_changed = Map.empty" r.name
+                  sprintf "          %s_removed = Set.empty" r.name ]
+          yield "        }"
+          yield! [ ""; "" ] ]
+        |> List.fold (fun a x -> a + "\n" + x) ""
 
     let generate (records : Records) = 
         [ prefix
           mkType records
-          mkDiffType records ]
+          mkDiffType records
+          mkLocalDbC records
+          mkSerializeDiff records
+          mkApplyDiff records ]
         |> List.fold (+) ""
 
-    module GneratedExample =
+    module GeneratedExample =
         type Post = Post
         type Tag = Tag
 
@@ -268,16 +317,18 @@ module Generator =
               topTags_changed : Map<string, Tag>
               topTags_removed : Set<string> }
 
+        open Serializer
+        
         let main _ =
-            let PostC : Post Serializer.C = never()
-            let TagC : Tag Serializer.C = never()
+            let PostC : Post C = never()
+            let TagC : Tag C = never()
 
-            let LocalDbC : LocalDbDiff Serializer.C =
-                Serializer.recordC
-                    [ { getSer = fun x -> (Serializer.MapC Serializer.IntC PostC).ser x.posts_changed
-                        deserSet = fun x bs -> (Serializer.MapC Serializer.IntC PostC).deser bs 0 |> fun (f, l) -> { x with posts_changed = f }, l }
-                      { getSer = fun x -> (Serializer.SetC Serializer.IntC).ser x.posts_removed
-                        deserSet = fun x bs -> (Serializer.SetC Serializer.IntC).deser bs 0 |> fun (f, l) -> { x with posts_removed = f }, l } ]
+            let LocalDbC : LocalDbDiff C =
+                recordC
+                    [ { getSer = fun x -> (MapC IntC PostC).ser x.posts_changed
+                        deserSet = fun x bs -> (MapC IntC PostC).deser bs |> fun (f, l) -> { x with posts_changed = f }, l }
+                      { getSer = fun x -> (SetC IntC).ser x.posts_removed
+                        deserSet = fun x bs -> (SetC IntC).deser bs |> fun (f, l) -> { x with posts_removed = f }, l } ]
                     { posts_changed = Map.empty
                       posts_removed = Set.empty
                       userTags_changed = Map.empty
@@ -295,7 +346,7 @@ module Generator =
                 |> LocalDbC.ser
 
             let applyDiff (a : LocalDb) (bytes : byte[]) : LocalDb =
-                let (df, _) = LocalDbC.deser { bytes = bytes; offset = 0 } 0
+                let (df, _) = LocalDbC.deser { bytes = bytes; offset = 0 }
                 { a with 
                     posts = Diff.applyDiff a.posts df.posts_changed df.posts_removed
                     userTags = Diff.applyDiff a.userTags df.userTags_changed df.userTags_removed
