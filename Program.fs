@@ -165,7 +165,7 @@ module Serializer =
             |> Array.concat
             |> fun xs -> Array.concat [ BitConverter.GetBytes(fields.Length) ; xs ]
           deser = fun b _ ->
-            let add i f x = (fields.[i - 1]).set x f
+            let set i f x = (fields.[i - 1]).set x f
             let deser b i = (fields.[i - 1]).deser b
             let count = BitConverter.ToInt32(b.bytes, b.offset)
             List.init count ignore
@@ -173,7 +173,7 @@ module Serializer =
                 (fun (m, l, i) _ ->
                     let (k, l1) = IntC.deser { b with offset = b.offset + l } 0
                     let (v, l2) = deser { b with offset = b.offset + l + l1 } i
-                    add k v m, l + l1 + l2, i + 1)
+                    set k v m, l + l1 + l2, i + 1)
                 (empty, 4, 1) 
             |> fun (a, b, _) -> a, b }
     type SimpleTypeField = IntField of int | StringField of string
