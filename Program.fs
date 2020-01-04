@@ -59,9 +59,9 @@ module Diff =
                 else failwithf "Assert failed\nExpected = %O\nActual = %O" origin changed
 
 module Serializer =
-    type C<'a, 'k> = 
+    type C<'a> = 
         { ser : 'a -> byte []
-          deser : byte [] -> int -> 'k -> 'a * int }
+          deser : byte [] -> int -> int -> 'a * int }
 
     type KeyValue =
         | OfBase of byte [] * parserId : Guid
@@ -69,13 +69,13 @@ module Serializer =
         | OfString of key : string * value : KeyValue * parserId : Guid
         | OfCollection of value : KeyValue []
         | OfMap of value : Map<string, KeyValue>
-    let UnitC : C<unit, _> =
+    let UnitC : C<unit> =
         { ser = fun _ -> [||]
-          deser = fun _ o _ -> (), 0 }
-    let IntC : C<int, _> =
+          deser = fun _ _ _ -> (), 0 }
+    let IntC : C<int> =
         { ser = fun x -> BitConverter.GetBytes(x)
           deser = fun x o _ -> BitConverter.ToInt32(x, o), 4 }
-    let StringC : C<string, _> = 
+    let StringC : C<string> = 
         { ser = (fun x -> 
             let bs = Text.Encoding.UTF8.GetBytes(x)
             Array.concat [ BitConverter.GetBytes(bs.Length) ; bs ])
@@ -86,7 +86,7 @@ module Serializer =
         { toList : 'a -> ('k * 'b) list
           add : 'k -> 'b -> 'a -> 'a
           empty : 'a }
-    let commonC (keyC : C<'k, _>) (valueC : C<'b, 'k>) (objModule : ObjModule<'a, 'b, 'k>) : C<'a, _> = 
+    let commonC (keyC : C<'k>) (valueC : C<'b>) (objModule : ObjModule<'a, 'b, 'k>) : C<'a> = 
         { ser = fun m ->
             objModule.toList m
             |> List.collect (fun (i, x) -> [ keyC.ser i; valueC.ser x ])
@@ -96,24 +96,25 @@ module Serializer =
             let count = BitConverter.ToInt32(bs, o)
             List.init count ignore
             |> List.fold 
-                (fun (m, l) _ -> 
-                    let (k, l1) = keyC.deser bs (o + l) ()
-                    let (v, l2) = valueC.deser bs (o + l + l1) k
-                    objModule.add k v m, l + l1 + l2)
-                (objModule.empty, 4) }
-    let MapC (keyC : C<'k, _>) (vc : C<'v, _>) : C<Map<'k, 'v>, _> =
+                (fun (m, l, k_) _ -> 
+                    let (k, l1) = keyC.deser bs (o + l) 0
+                    let (v, l2) = valueC.deser bs (o + l + l1) k_ //k
+                    objModule.add k v m, l + l1 + l2, k_ + 1)
+                (objModule.empty, 4, 1) 
+            |> fun (a, b, _) -> a, b }
+    let MapC (keyC : C<'k>) (vc : C<'v>) : C<Map<'k, 'v>> =
         let objModule : ObjModule<Map<'k, 'v>, 'v, 'k> = 
             { toList = fun m -> Map.toList m
               add = fun k v m -> Map.add k v m
               empty = Map.empty }
         commonC keyC vc objModule
-    let SetC (keyC : C<'k, _>) : C<Set<'k>, _> =
+    let SetC (keyC : C<'k>) : C<Set<'k>> =
         let objModule : ObjModule<Set<'k>, unit, 'k> = 
             { toList = fun m -> Set.toList m |> List.map (fun x -> x, ())
               add = fun k _ m -> Set.add k m
               empty = Set.empty }
         commonC keyC UnitC objModule
-    let OptionC (valueC : C<'v, _>) : C<Option<'v>, _> =
+    let OptionC (valueC : C<'v>) : C<Option<'v>> =
         let objModule : ObjModule<Option<'v>, _, _> = 
             { toList = fun m -> m |> Option.map (fun x -> [(), x]) |> Option.defaultValue []
               add = fun _ x _ -> Some x
@@ -127,23 +128,26 @@ module Serializer =
             { posts : Map<int, Post>
               userTags : Map<string, Tag>
               topTags : Map<string, Tag> }
-        let TagC : C<Tag, _> = { ser = (fun _ -> [||]); deser = (fun _ _ _ -> Tag, 0) }
+        let TagC : C<Tag> = { ser = (fun _ -> [||]); deser = (fun _ _ _ -> Tag, 0) }
 
         type SimpleTypes = IntType of int | StringType of string
+        let defSer = function IntType x -> IntC.ser x | StringType x -> StringC.ser x
+        let mapTuple deser bs o f = deser bs o 0 |> fun (x, l) -> f x, l
 
-        let PostC : C<Post, _> =
-            let a : C<SimpleTypes, _> = 
-                { ser = function
-                        | IntType x -> IntC.ser x
-                        | StringType x -> StringC.ser x
-                  deser = fun bs o k -> 
-                      match k with
-                      | 1 -> IntC.deser bs o () |> fun (x, l) -> IntType x, l
-                      | 2 -> StringC.deser bs o () |> fun (x, l) -> StringType x, l
-                      | 3 -> IntC.deser bs o () |> fun (x, l) -> IntType x, l
+        let PostC : C<Post> =
+            let a : C<SimpleTypes> = 
+                { ser = defSer
+                  deser = fun bs o i -> 
+                      match i with
+                      | 1 -> mapTuple IntC.deser bs o IntType
+                      | 2 -> mapTuple StringC.deser bs o StringType
+                      | 3 -> mapTuple IntC.deser bs o IntType
                       | x -> failwithf "illegal tag (%i)" x }
             let b : ObjModule<Post, SimpleTypes, int> = 
-                { toList = fun x -> [ 1, IntType x.id; 2, StringType x.title; 3, IntType x.comments ]
+                { toList = fun x -> 
+                    [ 1, IntType x.id
+                      2, StringType x.title
+                      3, IntType x.comments ]
                   add = fun k f x -> 
                     match k, f with
                     | 1, IntType id -> { x with id = id }
@@ -153,19 +157,61 @@ module Serializer =
                   empty = { id = 0; title = ""; comments = 0 } }
             commonC IntC a b
 
+        (* ... *)
+        type FieldTag = FieldTag of int
+        type Field'<'fieldDesc, 'value> = 
+            { f : FieldTag -> byte [] -> int -> 'fieldDesc * int
+              g : 'value -> 'fieldDesc
+              h : 'fieldDesc -> 'value -> 'value }
+        (* ... *)
+        type PostField' = 
+            | IdType' of int * C<int>
+            | TitleType' of string * C<string>
+            | CommentsType' of int * C<int>
+        let fields_ : Field'<PostField', Post> list = 
+            [ { f = fun _ _ _ -> IdType' (TODO()), TODO()
+                g = fun _ -> TODO()
+                h = fun _ _ -> TODO() } 
+              { f = fun _ _ _ -> TitleType' (TODO()), TODO()
+                g = fun _ -> TODO()
+                h = fun _ _ -> TODO() }
+              { f = fun _ _ _ -> CommentsType' (TODO()), TODO()
+                g = fun _ -> TODO()
+                h = fun _ _ -> TODO() } ]
+        let empty_ : Post = { id = 0; title = ""; comments = 0 }
+        (* ... *)
+        let PostC' : C<Post> =
+            let a : C<PostField'> = 
+                { ser = 
+                    function 
+                    | IdType' (x, c) -> c.ser x 
+                    | TitleType' (x, c) -> c.ser x
+                    | CommentsType' (x, c) -> c.ser x
+                  deser = fun bs o i ->
+                    let f = fields_.[i]
+                    let (r, l) = f.f (FieldTag i) bs o
+                    r, l }
+            let b : ObjModule<Post, PostField', int> = 
+                { toList = fun p -> fields_ |> List.mapi (fun i x -> i + 1, x.g p)
+                  add = fun i f x -> 
+                    let f' = fields_.[i]
+                    f'.h f x
+                  empty = empty_ }
+            commonC IntC a b
+
         type LocalDbFields = PostsField of Map<int, Post> | UserTagsField of Map<string, Tag> | TopTagsField of Map<string, Tag>
-        let LocalDbC : C<LocalDb, unit> = 
-            let a : C<LocalDbFields, _> =
+        let LocalDbC : C<LocalDb> = 
+            let a : C<LocalDbFields> =
                 { ser = 
                     function
                     | PostsField x -> (MapC IntC PostC).ser x
                     | UserTagsField x -> (MapC StringC TagC).ser x
                     | TopTagsField x -> (MapC StringC TagC).ser x
-                  deser = fun bs o key ->
-                    match key with
-                    | 1 -> (MapC IntC PostC).deser bs o () |> fun (x, o) -> PostsField x, o
-                    | 2 -> (MapC StringC TagC).deser bs o () |> fun (x, o) -> UserTagsField x, o
-                    | 3 -> (MapC StringC TagC).deser bs o () |> fun (x, o) -> TopTagsField x, o
+                  deser = fun bs o i ->
+                    match i with
+                    | 1 -> (MapC IntC PostC).deser bs o 0 |> fun (x, o) -> PostsField x, o
+                    | 2 -> (MapC StringC TagC).deser bs o 0 |> fun (x, o) -> UserTagsField x, o
+                    | 3 -> (MapC StringC TagC).deser bs o 0 |> fun (x, o) -> TopTagsField x, o
                     | x -> failwithf "illegal tag (%i)" x }
             let b : ObjModule<LocalDb, LocalDbFields, int> = 
                 { toList = fun x -> 
@@ -187,7 +233,7 @@ module Serializer =
                 topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
             let a = LocalDbC.ser db
             printfn "%A" a
-            let (b, len) = LocalDbC.deser a 0 ()
+            let (b, len) = LocalDbC.deser a 0 0
             printfn "%O (%i)" b len
             if db <> b then failwith "Deserialized result not equals to origin"
 
@@ -228,6 +274,6 @@ let main _ =
     // Parser.parse "example.yaml"
     // |> Generator.generate
     // |> fun x -> IO.File.WriteAllText("result.gen.fsx", x)
-    // Example.main()
-    Diff.Example.main()
+    Serializer.Example.main()
+    // Diff.Example.main()
     0
