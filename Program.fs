@@ -160,7 +160,21 @@ module Serializer =
                     v, l + l2) 
                 (empty, 0) }
 
+    let inline mkSer c g s =
+        { getSer = fun x -> c.ser ^ g x
+          deserSet = fun x bs -> c.deser bs |> fun (f, l) -> s x f, l }
+
     module Example =
+        type Profile = Profile
+        let ProfileC : Profile C = recordC [] Profile
+        type PostsWithLevels = PostsWithLevels
+        let PostsWithLevelsC : PostsWithLevels C = recordC [] PostsWithLevels
+        type Message = Message
+        let MessageC : Message C = recordC [] Message
+        type Source = Source
+        let SourceC : Source C = recordC [] Source
+        type PostResponse = PostResponse
+        let PostResponseC : PostResponse C = recordC [] PostResponse
         type Post = { id : int; title: string; comments: int }
         type Tag = Tag
         type LocalDb =
@@ -173,26 +187,18 @@ module Serializer =
 
         let PostC : C<Post> =
             recordC
-                [ { getSer = fun x -> IntC.ser x.id
-                    deserSet = fun x bs -> IntC.deser bs |> fun (f, l) -> { x with id = f }, l }
-                  { getSer = fun x -> StringC.ser x.title
-                    deserSet = fun x bs -> StringC.deser bs |> fun (f, l) -> { x with title = f }, l }
-                  { getSer = fun x -> IntC.ser x.comments
-                    deserSet = fun x bs -> IntC.deser bs |> fun (f, l) -> { x with comments = f }, l } ] 
+                [ mkSer IntC (fun x -> x.id) (fun x f -> { x with id = f })
+                  mkSer StringC (fun x -> x.title) (fun x f -> { x with title = f })
+                  mkSer IntC (fun x -> x.comments) (fun x f -> { x with comments = f }) ] 
                 { id = 0; title = ""; comments = 0 }
 
         let LocalDbC : C<LocalDb> =
             recordC
-                [ { getSer = fun x -> (MapC IntC PostC).ser x.posts
-                    deserSet = fun x bs -> (MapC IntC PostC).deser bs |> fun (f, l) -> { x with posts = f }, l }
-                  { getSer = fun x -> (MapC StringC TagC).ser x.userTags
-                    deserSet = fun x bs -> (MapC StringC TagC).deser bs |> fun (f, l) -> { x with userTags = f }, l }
-                  { getSer = fun x -> (MapC StringC TagC).ser x.topTags
-                    deserSet = fun x bs -> (MapC StringC TagC).deser bs |> fun (f, l) -> { x with topTags = f }, l }
-                  { getSer = fun x -> IntC.ser x.number1
-                    deserSet = fun x bs -> IntC.deser bs |> fun (f, l) -> { x with number1 = f }, l }
-                  { getSer = fun x -> StringC.ser x.string1
-                    deserSet = fun x bs -> StringC.deser bs |> fun (f, l) -> { x with string1 = f }, l } ]
+                [ mkSer (MapC IntC PostC) (fun x -> x.posts) (fun x f -> { x with posts = f })
+                  mkSer (MapC StringC TagC) (fun x -> x.userTags) (fun x f -> { x with userTags = f })
+                  mkSer (MapC StringC TagC) (fun x -> x.topTags) (fun x f -> { x with topTags = f })
+                  mkSer IntC (fun x -> x.number1) (fun x f -> { x with number1 = f })
+                  mkSer StringC (fun x -> x.string1) (fun x f -> { x with string1 = f }) ]
                 { posts = Map.empty ; userTags = Map.empty; topTags = Map.empty; number1 = 0; string1 = "" }
 
         let main () =
@@ -217,7 +223,7 @@ type A =
 type Records = A list
 
 module Generator =
-    let prefix = "(* GENERATED *)\n\n#load \"Program.fs\"\nopen App\nopen App.Serializer\n\ntype Post = Post\ntype Tag = Tag\n\ntype LocalDb =\n"
+    let prefix = "(* GENERATED *)\n\n#load \"Program.fs\"\nopen App\nopen App.Serializer\nopen App.Serializer.Example\n\ntype LocalDb =\n"
 
     let mkType records =
         records
@@ -234,6 +240,7 @@ module Generator =
         function 
         | "int" -> "IntC"
         | "string" -> "StringC"
+        | "unit" -> "UnitC"
         | name -> sprintf "%sC" name
 
     let mkDiffType (records : Records) =
@@ -276,10 +283,8 @@ module Generator =
             records
             |> List.collect ^ fun r ->
                 let kt = getMapKeyType r.type_ |> typeToCType
-                [ sprintf "          { getSer = fun x -> (MapC %s %sC).ser x.%s_changed" kt (getMapValueType r.type_) r.name
-                  sprintf "            deserSet = fun x bs -> (MapC %s %sC).deser bs |> fun (f, l) -> { x with %s_changed = f }, l }" kt (getMapValueType r.type_) r.name
-                  sprintf "          { getSer = fun x -> (SetC %s).ser x.%s_removed" kt r.name
-                  sprintf "            deserSet = fun x bs -> (SetC %s).deser bs |> fun (f, l) -> { x with %s_removed = f }, l }" kt r.name ]
+                [ sprintf "          mkSer (MapC %s %s) (fun x -> x.%s_changed) (fun x f -> { x with %s_changed = f })" kt (getMapValueType r.type_ |> typeToCType) r.name r.name
+                  sprintf "          mkSer (SetC %s) (fun x -> x.%s_removed) (fun x f -> { x with %s_removed = f })" kt r.name r.name ]
           yield "        ]"
           yield "        {"
           yield! 
