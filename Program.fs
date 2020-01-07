@@ -223,16 +223,12 @@ type A =
 type Records = A list
 
 module Generator =
-    let prefix = "(* GENERATED *)\n\n#load \"Program.fs\"\nopen App\nopen App.Serializer\nopen App.Serializer.Example\n\ntype LocalDb =\n"
+    let mkHeader _ = [ "(* GENERATED *)\n\n#load \"Program.fs\"\nopen App\nopen App.Serializer\nopen App.Serializer.Example\n" ]
 
     let mkType records =
-        records
-        |> List.mapi ^ fun i x -> 
-              if i = 0 then sprintf "    { %s : %s\n" x.name x.type_
-              else if i = records.Length - 1 then sprintf "      %s : %s }\n" x.name x.type_
-              else sprintf "      %s : %s\n" x.name x.type_
-        |> List.fold (+) ""
-        |> flip (+) "\n"
+        [ yield "type LocalDb =\n    {"
+          yield! records |> List.map ^ fun x -> sprintf "      %s : %s" x.name x.type_
+          yield "    }\n" ]
 
     let getMapKeyType = function Match "Map<(.+?), .+?>" [x] -> x | e -> failwithf "%O" e
     let getMapValueType = function Match "Map<.+?, (.+?)>" [x] -> x | e -> failwithf "%O" e
@@ -244,36 +240,30 @@ module Generator =
         | name -> sprintf "%sC" name
 
     let mkDiffType (records : Records) =
-        records
-        |> List.indexed
-        |> List.collect ^ fun (i, r) -> 
-            [ (if i = 0 
-                  then sprintf "    { %s_changed : %s\n" r.name r.type_
-                  else sprintf "      %s_changed : %s\n" r.name r.type_)
-              (if i = length records - 1
-                  then sprintf "      %s_removed : Set<%s> }\n" r.name (getMapKeyType r.type_)
-                  else sprintf "      %s_removed : Set<%s>\n" r.name (getMapKeyType r.type_)) ]
-        |> List.fold (+) "type LocalDbDiff =\n"
+        [ yield "type LocalDbDiff =\n    {"
+          yield!
+            records
+            |> List.collect ^ fun r -> 
+                [ sprintf "      %s_changed : %s" r.name r.type_
+                  sprintf "      %s_removed : Set<%s>" r.name (getMapKeyType r.type_) ]
+          yield "    }\n" ]
 
     let mkSerializeDiff (records : Records) =
-        records
-        |> List.indexed
-        |> List.collect ^ fun (i, r) -> 
-            [ (if i = 0 
-                  then sprintf "    { %s_changed = Diff.diffMapsAdd a.%s b.%s\n" r.name r.name r.name
-                  else sprintf "      %s_changed = Diff.diffMapsAdd a.%s b.%s\n" r.name r.name r.name)
-              (if i = length records - 1
-                  then sprintf "      %s_removed = Diff.diffMapsRemove a.%s b.%s }\n" r.name r.name r.name
-                  else sprintf "      %s_removed = Diff.diffMapsRemove a.%s b.%s\n" r.name r.name r.name) ]
-        |> List.fold (+) "let serializeDiff (a : LocalDb) (b : LocalDb) : byte [] =\n"
-        |> flip (+) "    |> LocalDbC.ser\n\n"
+        [ yield "let serializeDiff (a : LocalDb) (b : LocalDb) : byte [] =\n    {"
+          yield!
+            records
+            |> List.collect ^ fun r ->
+                [ sprintf "      %s_changed = Diff.diffMapsAdd a.%s b.%s" r.name r.name r.name
+                  sprintf "      %s_removed = Diff.diffMapsRemove a.%s b.%s" r.name r.name r.name ]
+          yield "    } |> LocalDbC.ser\n" ]
 
     let mkApplyDiff records =
-        records
-        |> List.map ^ fun r -> 
-            sprintf "        %s = Diff.applyDiff a.%s df.%s_changed df.%s_removed\n" r.name r.name r.name r.name
-        |> List.fold (+) "let applyDiff (a : LocalDb) (bytes : byte[]) : LocalDb =\n    let (df, _) = LocalDbC.deser { bytes = bytes; offset = 0 }\n    { a with\n"
-        |> flip (+) "    }\n\n"
+        [ yield "let applyDiff (a : LocalDb) (bytes : byte[]) : LocalDb =\n    let (df, _) = LocalDbC.deser { bytes = bytes; offset = 0 }\n    { a with"
+          yield!
+            records
+            |> List.map ^ fun r -> 
+                sprintf "        %s = Diff.applyDiff a.%s df.%s_changed df.%s_removed" r.name r.name r.name r.name
+          yield "    }\n"]
 
     let mkLocalDbC records =
         [ yield "let LocalDbC : LocalDbDiff C ="
@@ -292,18 +282,17 @@ module Generator =
             |> List.collect ^ fun r ->
                 [ sprintf "          %s_changed = Map.empty" r.name
                   sprintf "          %s_removed = Set.empty" r.name ]
-          yield "        }"
-          yield! [ ""; "" ] ]
-        |> List.fold (fun a x -> a + "\n" + x) ""
+          yield "        }\n" ]
 
     let generate (records : Records) = 
-        [ prefix
-          mkType records
-          mkDiffType records
-          mkLocalDbC records
-          mkSerializeDiff records
-          mkApplyDiff records ]
-        |> List.fold (+) ""
+        [ mkHeader
+          mkType
+          mkDiffType
+          mkLocalDbC
+          mkSerializeDiff
+          mkApplyDiff ]
+        |> Seq.collect (fun f -> f records)
+        |> Seq.fold (sprintf "%s\n%s") ""
 
     module GeneratedExample =
         type Post = Post
