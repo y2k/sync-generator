@@ -4,3 +4,4 @@ obj/
 *.gen.*
 *.yaml
 .ionide/
+node_modules/

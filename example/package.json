@@ -1,0 +1,12 @@
+{
+    "scripts": {
+        "fable": "fable-splitter && rollup bin/Program.js --compact --format iife --file bin/bundle.js"
+    },
+    "devDependencies": {
+        "@babel/preset-env": "^7.7.7",
+        "fable-compiler": "^2.4.11",
+        "fable-splitter": "^2.1.11",
+        "rollup": "^1.27.14",
+        "rollup-plugin-terser": "^5.1.3"
+    }
+}
