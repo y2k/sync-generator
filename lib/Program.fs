@@ -163,6 +163,10 @@ module Serializer =
     let inline mkSer c g s =
         { getSer = fun x -> c.ser ^ g x
           deserSet = fun x bs -> c.deser bs |> fun (f, l) -> s x f, l }
+    let inline intC g s = mkSer IntC g s
+    let inline stringC g s = mkSer StringC g s
+    let inline mapIC vc g s = mkSer (MapC IntC vc) g s
+    let inline mapSC vc g s = mkSer (MapC StringC vc) g s
 
     module Example =
         type Profile = Profile
@@ -187,19 +191,19 @@ module Serializer =
 
         let PostC : C<Post> =
             recordC
-                [ mkSer IntC (fun x -> x.id) (fun x f -> { x with id = f })
-                  mkSer StringC (fun x -> x.title) (fun x f -> { x with title = f })
-                  mkSer IntC (fun x -> x.comments) (fun x f -> { x with comments = f }) ] 
+                [ intC (fun x -> x.id) (fun x f -> { x with id = f })
+                  stringC (fun x -> x.title) (fun x f -> { x with title = f })
+                  intC (fun x -> x.comments) (fun x f -> { x with comments = f }) ] 
                 { id = 0; title = ""; comments = 0 }
 
         let LocalDbC : C<LocalDb> =
             recordC
-                [ mkSer (MapC IntC PostC) (fun x -> x.posts) (fun x f -> { x with posts = f })
-                  mkSer (MapC StringC TagC) (fun x -> x.userTags) (fun x f -> { x with userTags = f })
-                  mkSer (MapC StringC TagC) (fun x -> x.topTags) (fun x f -> { x with topTags = f })
-                  mkSer IntC (fun x -> x.number1) (fun x f -> { x with number1 = f })
-                  mkSer StringC (fun x -> x.string1) (fun x f -> { x with string1 = f }) ]
-                { posts = Map.empty ; userTags = Map.empty; topTags = Map.empty; number1 = 0; string1 = "" }
+                [ mapIC PostC (fun x -> x.posts) (fun x f -> { x with posts = f })
+                  mapSC TagC (fun x -> x.userTags) (fun x f -> { x with userTags = f })
+                  mapSC TagC (fun x -> x.topTags) (fun x f -> { x with topTags = f })
+                  intC (fun x -> x.number1) (fun x f -> { x with number1 = f })
+                  stringC (fun x -> x.string1) (fun x f -> { x with string1 = f }) ]
+                { posts = Map.empty; userTags = Map.empty; topTags = Map.empty; number1 = 0; string1 = "" }
 
         let main () =
             let db = 
