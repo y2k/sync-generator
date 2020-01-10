@@ -1,0 +1,33 @@
+- name: feeds
+  type_: Map<Source, PostsWithLevels>
+  sync: from-server
+- name: sharedFeeds
+  type_: PostResponse option
+  sync: from-server
+- name: posts
+  type_: Map<int, Post>
+  sync: from-server
+- name: userName
+  type_: string option
+  sync: from-server
+- name: userTags
+  type_: Map<string, Tag>
+  sync: from-server
+- name: topTags
+  type_: Map<string, Tag>
+  sync: from-server
+- name: messages
+  type_: Message Set
+  sync: from-server
+- name: sharedMessages
+  type_: Message Set
+  sync: from-server
+- name: nextMessagesPage
+  type_: string option
+  sync: from-server
+- name: profile
+  type_: Profile option
+  sync: from-server
+- name: parseRequests
+  type_: string Set
+  sync: to-server

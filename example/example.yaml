@@ -1,0 +1,6 @@
+module': Store.Gen
+open': Example.Types
+items:
+- name: posts
+  type_: Map<int, Post>
+  sync: from-server

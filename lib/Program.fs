@@ -21,7 +21,7 @@ module Diff =
         let added = Map.filter (fun k _ -> Map.containsKey k ma |> not) mb
         let changed =
             Map.toSeq ma
-            |> Seq.choose (fun (k, v) -> if Map.containsKey k mb && Map.find k mb <> v then Some (k, v) else None)
+            |> Seq.choose (fun (k, v) -> if Map.containsKey k mb && Map.find k mb <> v then Some (k, Map.find k mb) else None)
             |> Map.ofSeq
         Map.fold (fun acc k v -> Map.add k v acc) added changed
     let diffMapsRemove (ma : Map<'k, 'v>) (mb : Map<'k, 'v>) : Set<'k> =
@@ -31,54 +31,12 @@ module Diff =
         let removed = Map.toSeq ma |> Seq.choose (fun (k, _) -> if Map.containsKey k mb then None else Some k) |> Set.ofSeq
         let changed =
             Map.toSeq ma
-            |> Seq.choose (fun (k, v) -> if Map.containsKey k mb && Map.find k mb <> v then Some (k, v) else None)
+            |> Seq.choose (fun (k, v) -> if Map.containsKey k mb && Map.find k mb <> v then Some (k, Map.find k mb) else None)
             |> Map.ofSeq
         Map.fold (fun acc k v -> Map.add k v acc) added changed, removed
     let applyDiff m changed deleted =
         let m = deleted |> Set.fold (fun acc k -> Map.remove k acc) m
         Map.fold (fun acc k v -> Map.add k v acc) m changed
-
-    module Example =
-        type Post = Post
-        type Tag = Tag
-        type LocalDb =
-            { posts : Map<int, Post>
-              userTags : Map<string, Tag>
-              topTags : Map<string, Tag> }
-        type LocalDbDiff =
-            { posts_changed : Map<int, Post>
-              posts_deleted : Set<int>
-              userTags_changed : Map<string, Tag>
-              userTags_deleted : Set<string>
-              topTags_changed : Map<string, Tag>
-              topTags_deleted : Set<string> }
-        let diff a b =
-            let (pc, pd) = diffMaps a.posts b.posts
-            let (uc, ud) = diffMaps a.userTags b.userTags
-            let (tc, td) = diffMaps a.topTags b.topTags
-            { posts_changed = pc; posts_deleted = pd; 
-              userTags_changed = uc; userTags_deleted = ud; 
-              topTags_changed = tc; topTags_deleted = td }
-        let apply a diff =
-            { posts = applyDiff a.posts diff.posts_changed diff.posts_deleted
-              userTags = applyDiff a.userTags diff.userTags_changed diff.userTags_deleted
-              topTags = applyDiff a.topTags diff.topTags_changed diff.topTags_deleted }
-        let main _ =
-            let origin =
-                { posts = [ 999, Post; 42, Post ] |> Map.ofList
-                  userTags = [ "comix", Tag ] |> Map.ofList
-                  topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
-            let changed =
-                { posts = [ 999, Post ] |> Map.ofList
-                  userTags = [ "anime", Tag; "comix", Tag ] |> Map.ofList
-                  topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
-            let diff = diff origin changed
-            printfn "Diff = %O" diff
-
-            let actual = apply origin diff
-            if actual = changed 
-                then printfn "Update success"
-                else failwithf "Assert failed\nExpected = %O\nActual = %O" origin changed
 
 module Serializer =
     type Buffer = { bytes : byte []; offset : int }
@@ -168,7 +126,61 @@ module Serializer =
     let inline mapIC vc g s = mkSer (MapC IntC vc) g s
     let inline mapSC vc g s = mkSer (MapC StringC vc) g s
 
-    module Example =
+#if !FABLE_COMPILER
+
+module Examples =
+    module DiffExample =
+        open Diff
+        type Post = { id: int; title: string; comments: int }
+        type Tag = Tag
+        type LocalDb =
+            { posts : Map<int, Post>
+              userTags : Map<string, Tag>
+              topTags : Map<string, Tag> }
+        type LocalDbDiff =
+            { posts_changed : Map<int, Post>
+              posts_deleted : Set<int>
+              userTags_changed : Map<string, Tag>
+              userTags_deleted : Set<string>
+              topTags_changed : Map<string, Tag>
+              topTags_deleted : Set<string> }
+        let diff a b =
+            let (pc, pd) = diffMaps a.posts b.posts
+            let (uc, ud) = diffMaps a.userTags b.userTags
+            let (tc, td) = diffMaps a.topTags b.topTags
+            { posts_changed = pc; posts_deleted = pd; 
+              userTags_changed = uc; userTags_deleted = ud; 
+              topTags_changed = tc; topTags_deleted = td }
+        let apply a diff =
+            { posts = applyDiff a.posts diff.posts_changed diff.posts_deleted
+              userTags = applyDiff a.userTags diff.userTags_changed diff.userTags_deleted
+              topTags = applyDiff a.topTags diff.topTags_changed diff.topTags_deleted }
+        let main _ =
+            let origin =
+                { posts = [ 999, { id = 999; title = "title-999"; comments = 10 }; 42,  { id = 42; title = "title-42"; comments = 100 } ] |> Map.ofList
+                  userTags = [ "comix", Tag ] |> Map.ofList
+                  topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
+            let changed =
+                { posts = [ 999, { id = 999; title = "title-999"; comments = 10 } ] |> Map.ofList
+                  userTags = [ "anime", Tag; "comix", Tag ] |> Map.ofList
+                  topTags = [ "ecchi", Tag; "it", Tag ] |> Map.ofList }
+            let d = diff origin changed
+            printfn "Diff = %O" diff
+
+            let actual = apply origin d
+            if actual = changed 
+                then printfn "Update success"
+                else failwithf "Assert failed\nExpected = %O\nActual = %O" origin changed
+
+            let expected = { origin with posts = origin.posts |> Map.map (fun _ v -> { v with comments = v.comments + 1 }) }
+            let d = diff origin expected
+            let actual = d |> apply origin
+            if actual = expected 
+                then printfn "Update success"
+                else failwithf "Assert failed\nExpected = %O\nActual = %O\nDiff = %O" expected actual d
+
+    module SerializerExample =
+        open Serializer
         type Profile = Profile
         let ProfileC : Profile C = recordC [] Profile
         type PostsWithLevels = PostsWithLevels
@@ -224,14 +236,19 @@ type A =
     { name: string
       type_: string
       sync: string }
-type Records = A list
+type Records = { module': string; open': string; items: A list }
 
 module Generator =
-    let mkHeader _ = [ "(* GENERATED *)\n\n#load \"Program.fs\"\nopen App\nopen App.Serializer\nopen App.Serializer.Example\n" ]
+    let mkHeader x = 
+        [ "(* GENERATED *)\n"
+          sprintf "module %s\n" x.module'
+          sprintf "open %s" x.open' 
+          "open App"
+          "open App.Serializer\n" ]
 
     let mkType records =
         [ yield "type LocalDb =\n    {"
-          yield! records |> List.map ^ fun x -> sprintf "      %s : %s" x.name x.type_
+          yield! records.items |> List.map ^ fun x -> sprintf "      %s : %s" x.name x.type_
           yield "    }\n" ]
 
     let getMapKeyType = function Match "Map<(.+?), .+?>" [x] -> x | e -> failwithf "%O" e
@@ -246,7 +263,7 @@ module Generator =
     let mkDiffType (records : Records) =
         [ yield "type LocalDbDiff =\n    {"
           yield!
-            records
+            records.items
             |> List.collect ^ fun r -> 
                 [ sprintf "      %s_changed : %s" r.name r.type_
                   sprintf "      %s_removed : Set<%s>" r.name (getMapKeyType r.type_) ]
@@ -255,7 +272,7 @@ module Generator =
     let mkSerializeDiff (records : Records) =
         [ yield "let serializeDiff (a : LocalDb) (b : LocalDb) : byte [] =\n    {"
           yield!
-            records
+            records.items
             |> List.collect ^ fun r ->
                 [ sprintf "      %s_changed = Diff.diffMapsAdd a.%s b.%s" r.name r.name r.name
                   sprintf "      %s_removed = Diff.diffMapsRemove a.%s b.%s" r.name r.name r.name ]
@@ -264,7 +281,7 @@ module Generator =
     let mkApplyDiff records =
         [ yield "let applyDiff (a : LocalDb) (bytes : byte[]) : LocalDb =\n    let (df, _) = LocalDbC.deser { bytes = bytes; offset = 0 }\n    { a with"
           yield!
-            records
+            records.items
             |> List.map ^ fun r -> 
                 sprintf "        %s = Diff.applyDiff a.%s df.%s_changed df.%s_removed" r.name r.name r.name r.name
           yield "    }\n"]
@@ -274,7 +291,7 @@ module Generator =
           yield "    recordC"
           yield "        ["
           yield! 
-            records
+            records.items
             |> List.collect ^ fun r ->
                 let kt = getMapKeyType r.type_ |> typeToCType
                 [ sprintf "          mkSer (MapC %s %s) (fun x -> x.%s_changed) (fun x f -> { x with %s_changed = f })" kt (getMapValueType r.type_ |> typeToCType) r.name r.name
@@ -282,7 +299,7 @@ module Generator =
           yield "        ]"
           yield "        {"
           yield! 
-            records
+            records.items
             |> List.collect ^ fun r ->
                 [ sprintf "          %s_changed = Map.empty" r.name
                   sprintf "          %s_removed = Set.empty" r.name ]
@@ -361,14 +378,16 @@ module Parser =
          | [ Success { Data = x } ] -> x
          | e -> failwithf "illegal state (%O)" e
 
-  let main () =
-      parse "example.yaml"
+  let main path =
+      parse path
       |> Generator.generate
-      |> fun x -> IO.File.WriteAllText("result.gen.fsx", x)
+      |> fun x -> IO.File.WriteAllText(IO.Path.Combine(IO.Path.GetDirectoryName(path), "Store.gen.fs"), x)
 
 [<EntryPoint>]
-let main _ =
-    Parser.main()
+let main args =
+    Parser.main args.[0]
     // Serializer.Example.main()
-    // Diff.Example.main()
+    // Examples.DiffExample.main()
     0
+
+#endif
