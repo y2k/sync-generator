@@ -1,33 +1,24 @@
+module: Store.Gen
+open: Example.Types
 - name: feeds
-  type_: Map<Source, PostsWithLevels>
-  sync: from-server
+  type: Map<Source, PostsWithLevels>
 - name: sharedFeeds
-  type_: PostResponse option
-  sync: from-server
+  type: PostResponse option
 - name: posts
-  type_: Map<int, Post>
-  sync: from-server
+  type: Map<int, Post>
 - name: userName
-  type_: string option
-  sync: from-server
+  type: string option
 - name: userTags
-  type_: Map<string, Tag>
-  sync: from-server
+  type: Map<string, Tag>
 - name: topTags
-  type_: Map<string, Tag>
-  sync: from-server
+  type: Map<string, Tag>
 - name: messages
-  type_: Message Set
-  sync: from-server
+  type: Message Set
 - name: sharedMessages
-  type_: Message Set
-  sync: from-server
+  type: Message Set
 - name: nextMessagesPage
-  type_: string option
-  sync: from-server
+  type: string option
 - name: profile
-  type_: Profile option
-  sync: from-server
+  type: Profile option
 - name: parseRequests
-  type_: string Set
-  sync: to-server
+  type: string Set

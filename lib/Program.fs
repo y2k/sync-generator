@@ -232,11 +232,14 @@ module Examples =
             printfn "%O (%i)" b len
             if db <> b then failwith "Deserialized result not equals to origin"
 
+open Legivel.Attributes
+
 type A = 
     { name: string
-      type_: string
-      sync: string }
-type Records = { module': string; open': string; items: A list }
+      [<YamlField("type")>] type': string }
+type Records = 
+    { [<YamlField("module")>] module': string
+      [<YamlField("open")>] open': string; items: A list }
 
 module Generator =
     let mkHeader x = 
@@ -248,7 +251,7 @@ module Generator =
 
     let mkType records =
         [ yield "type LocalDb =\n    {"
-          yield! records.items |> List.map ^ fun x -> sprintf "      %s : %s" x.name x.type_
+          yield! records.items |> List.map ^ fun x -> sprintf "      %s : %s" x.name x.type'
           yield "    }\n" ]
 
     let getMapKeyType = function Match "Map<(.+?), .+?>" [x] -> x | e -> failwithf "%O" e
@@ -265,8 +268,8 @@ module Generator =
           yield!
             records.items
             |> List.collect ^ fun r -> 
-                [ sprintf "      %s_changed : %s" r.name r.type_
-                  sprintf "      %s_removed : Set<%s>" r.name (getMapKeyType r.type_) ]
+                [ sprintf "      %s_changed : %s" r.name r.type'
+                  sprintf "      %s_removed : Set<%s>" r.name (getMapKeyType r.type') ]
           yield "    }\n" ]
 
     let mkSerializeDiff (records : Records) =
@@ -293,8 +296,8 @@ module Generator =
           yield! 
             records.items
             |> List.collect ^ fun r ->
-                let kt = getMapKeyType r.type_ |> typeToCType
-                [ sprintf "          mkSer (MapC %s %s) (fun x -> x.%s_changed) (fun x f -> { x with %s_changed = f })" kt (getMapValueType r.type_ |> typeToCType) r.name r.name
+                let kt = getMapKeyType r.type' |> typeToCType
+                [ sprintf "          mkSer (MapC %s %s) (fun x -> x.%s_changed) (fun x f -> { x with %s_changed = f })" kt (getMapValueType r.type' |> typeToCType) r.name r.name
                   sprintf "          mkSer (SetC %s) (fun x -> x.%s_removed) (fun x f -> { x with %s_removed = f })" kt r.name r.name ]
           yield "        ]"
           yield "        {"

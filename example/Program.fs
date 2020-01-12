@@ -48,6 +48,7 @@ module ServerModule =
     open Store.Gen
 
     let sharedDb = ref { posts = Map.empty }
+
     let handle (diff : byte[]) : byte[] =
         sharedDb := applyDiff !sharedDb diff
         let db2 = Domain.onServerEvent !sharedDb
