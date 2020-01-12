@@ -2,15 +2,15 @@
 
 ## Yaml описание контракта
 ```yaml
-module': Store.Gen
-open': Example.Types
+module: Store.Gen
+open: Example.Types
 items:
 - name: posts
-  type_: Map<int, Post>
+  type: Map<int, Post>
 - name: userName
-  type_: string option
+  type: string option
 - name: messages
-  type_: Message Set
+  type: Message Set
 ```
 
 Для этого контракта гененируется тип
