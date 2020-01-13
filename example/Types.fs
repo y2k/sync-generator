@@ -1,6 +1,6 @@
 module Example.Types
 
-open App.Serializer
+open SyncGenerator.Lib.Serializer
 
 type Post = { id : int; title: string; comments: int }
 
