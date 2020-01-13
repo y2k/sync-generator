@@ -265,8 +265,8 @@ module Parser =
 
 [<EntryPoint>]
 let main args =
-    Parser.main args.[0]
-    // Examples.SerializerExample.main()
+    // Parser.main args.[0]
+    Examples.SerializerExample.main()
     // Examples.DiffExample.main()
     0
 
