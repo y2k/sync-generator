@@ -43,12 +43,6 @@ module Serializer =
     type C<'a> = 
         { ser : 'a -> byte []
           deser : Buffer -> 'a * int }
-    type KeyValue =
-        | OfBase of byte [] * parserId : Guid
-        | OfInt of key : int * value : KeyValue * parserId : Guid
-        | OfString of key : string * value : KeyValue * parserId : Guid
-        | OfCollection of value : KeyValue []
-        | OfMap of value : Map<string, KeyValue>
     let UnitC : C<unit> =
         { ser = fun _ -> [||]
           deser = fun _ -> (), 0 }
@@ -118,13 +112,28 @@ module Serializer =
                     v, l + l2) 
                 (empty, 0) }
 
+    let record3C (a : C<_>) f1 (b : C<_>) f2 (c : C<_>) f3 g : C<'v> =
+        { ser = fun m -> 
+            Array.concat [f1 m |> a.ser; f2 m |> b.ser; f3 m |> c.ser ]
+          deser = fun bs ->
+            let (a, l1) = bs |> a.deser
+            let (b, l2) = { bs with offset = bs.offset + l1 } |> b.deser
+            let (c, l3) = { bs with offset = bs.offset + l2 + l1 } |> c.deser
+            g a b c, l3 + l2 + l1 }
+    let record5C (c1 : C<_>) f1 (c2 : C<_>) f2 (c3 : C<_>) f3 c4 f4 c5 f5 g : C<'v> =
+        { ser = fun m -> 
+            Array.concat [f1 m |> c1.ser; f2 m |> c2.ser; f3 m |> c3.ser; f4 m |> c4.ser; f5 m |> c5.ser ]
+          deser = fun bs ->
+            let (a, l1) = bs |> c1.deser
+            let (b, l2) = { bs with offset = bs.offset + l1 } |> c2.deser
+            let (c, l3) = { bs with offset = bs.offset + l2 + l1 } |> c3.deser
+            let (d, l4) = { bs with offset = bs.offset + l3 + l2 + l1 } |> c4.deser
+            let (e, l5) = { bs with offset = bs.offset + l4 + l3 + l2 + l1 } |> c5.deser
+            g a b c d e, l5 + l4 + l3 + l2 + l1 }
+
     let inline mkSer c g s =
         { getSer = fun x -> c.ser ^ g x
           deserSet = fun x bs -> c.deser bs |> fun (f, l) -> s x f, l }
-    let inline intC g s = mkSer IntC g s
-    let inline stringC g s = mkSer StringC g s
-    let inline mapIC vc g s = mkSer (MapC IntC vc) g s
-    let inline mapSC vc g s = mkSer (MapC StringC vc) g s
 
 #if !FABLE_COMPILER
 
@@ -202,20 +211,20 @@ module Examples =
         let TagC : C<Tag> = { ser = (fun _ -> [||]); deser = (fun _ -> Tag, 0) }
 
         let PostC : C<Post> =
-            recordC
-                [ intC (fun x -> x.id) (fun x f -> { x with id = f })
-                  stringC (fun x -> x.title) (fun x f -> { x with title = f })
-                  intC (fun x -> x.comments) (fun x f -> { x with comments = f }) ] 
-                { id = 0; title = ""; comments = 0 }
+            record3C
+                IntC (fun x -> x.id) 
+                StringC (fun x -> x.title) 
+                IntC (fun x -> x.comments)
+                (fun a b c -> { id = a; title = b; comments = c})
 
         let LocalDbC : C<LocalDb> =
-            recordC
-                [ mapIC PostC (fun x -> x.posts) (fun x f -> { x with posts = f })
-                  mapSC TagC (fun x -> x.userTags) (fun x f -> { x with userTags = f })
-                  mapSC TagC (fun x -> x.topTags) (fun x f -> { x with topTags = f })
-                  intC (fun x -> x.number1) (fun x f -> { x with number1 = f })
-                  stringC (fun x -> x.string1) (fun x f -> { x with string1 = f }) ]
-                { posts = Map.empty; userTags = Map.empty; topTags = Map.empty; number1 = 0; string1 = "" }
+            record5C
+                (MapC IntC PostC) (fun x -> x.posts)
+                (MapC StringC TagC) (fun x -> x.userTags)
+                (MapC StringC TagC) (fun x -> x.topTags)
+                IntC (fun x -> x.number1)
+                StringC (fun x -> x.string1)
+                (fun a b c d e -> { posts = a; userTags = b; topTags = c; number1 = d; string1 = e })
 
         let main () =
             let db = 
@@ -389,7 +398,7 @@ module Parser =
 [<EntryPoint>]
 let main args =
     Parser.main args.[0]
-    // Serializer.Example.main()
+    // Examples.SerializerExample.main()
     // Examples.DiffExample.main()
     0
 

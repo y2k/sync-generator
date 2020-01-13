@@ -5,11 +5,11 @@ open App.Serializer
 type Post = { id : int; title: string; comments: int }
 
 let PostC : C<Post> =
-    recordC
-        [ intC (fun x -> x.id) (fun x f -> { x with id = f })
-          stringC (fun x -> x.title) (fun x f -> { x with title = f })
-          intC (fun x -> x.comments) (fun x f -> { x with comments = f }) ] 
-        { id = 0; title = ""; comments = 0 }
+    record3C
+        IntC (fun x -> x.id)
+        StringC (fun x -> x.title)
+        IntC (fun x -> x.comments)
+        (fun a b c -> { id = a; title = b; comments = c })
 
 module Utils =
     open Browser
