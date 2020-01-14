@@ -94,6 +94,18 @@ module Examples =
                 StringC (fun x -> x.string1)
                 (fun a b c d e -> { posts = a; userTags = b; topTags = c; number1 = d; string1 = e })
 
+        type Foo1 = Foo1 | Foo2 of string | Foo3 of int * double
+        let Foo1C : Foo1 C =
+            sum3C
+                UnitC (fun _ -> Foo1)
+                StringC Foo2 
+                (PairC IntC DoubleC) Foo3
+                (fun f0 f1 f2 -> function Foo1 -> f0 () | Foo2 x -> f1 x | Foo3 (a,b) -> f2 (a,b))
+        let foo _ =
+            Foo1 |> Foo1C.ser |> ignore
+            Foo2 "" |> Foo1C.ser |> ignore
+            Foo3 (0, 0.0) |> Foo1C.ser |> ignore
+
         let main () =
             let db = 
               { posts = 

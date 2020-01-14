@@ -199,3 +199,36 @@ module Serializer =
     let inline mkSer c g s =
         { getSer = fun x -> c.ser ^ g x
           deserSet = fun x bs -> c.deser bs |> fun (f, l) -> s x f, l }
+    
+    let PairC lc rc : C<_> =
+        { ser = fun (a, b) -> Array.concat [ lc.ser a; rc.ser b ]
+          deser = fun bs -> 
+            let (a, l1) = lc.deser bs
+            let (b, l2) = rc.deser { bs with offset = bs.offset + l1 }
+            (a, b), l1 + l2 }
+    let sum2C c0 f0 c1 f1 f : _ C =
+        { ser = fun x ->
+            f (fun a -> Array.concat [ IntC.ser 1; c0.ser a ]) 
+              (fun a -> Array.concat [ IntC.ser 2; c1.ser a ]) 
+              x
+          deser = fun bs ->
+            let (a, l) = IntC.deser bs
+            let bs = { bs with offset = bs.offset + l }
+            match a with
+            | 1 -> c0.deser bs |> fun (x, l) -> f0 x, l
+            | 2 -> c1.deser bs |> fun (x, l) -> f1 x, l
+            | _ -> failwith "???" }
+    let sum3C c0 f0 c1 f1 c2 f2 f : _ C =
+        { ser = fun x ->
+            f (fun a -> Array.concat [ IntC.ser 1; c0.ser a ]) 
+              (fun a -> Array.concat [ IntC.ser 2; c1.ser a ]) 
+              (fun a -> Array.concat [ IntC.ser 3; c2.ser a ]) 
+              x
+          deser = fun bs ->
+            let (a, l) = IntC.deser bs
+            let bs = { bs with offset = bs.offset + l }
+            match a with
+            | 1 -> c0.deser bs |> fun (x, l) -> f0 x, l
+            | 2 -> c1.deser bs |> fun (x, l) -> f1 x, l
+            | 3 -> c2.deser bs |> fun (x, l) -> f2 x, l
+            | _ -> failwith "???" }
